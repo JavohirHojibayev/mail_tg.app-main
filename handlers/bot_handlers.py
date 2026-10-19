@@ -243,10 +243,10 @@ def send_pdf_document(bot: TeleBot, chat_id: int, users: list, lang: str = "uz",
     )
     try:
         if query:
-            pdf_title = f"DKZ AJ mail xodimlar ro'yxati (Qidiruv: {query})" if lang == "uz" else f"Список сотрудников АО «ДКЗ» (Поиск: {query})"
+            pdf_title = f"DKZ AJ xodimlar ma'lumotlari (Qidiruv: {query})" if lang == "uz" else f"Информация о сотрудниках АО «ДКЗ» (Поиск: {query})"
             caption = t("pdf_search_caption", lang, query=query, count=len(users))
         else:
-            pdf_title = "DKZ AJ mail xodimlar ro'yxati" if lang == "uz" else "Список сотрудников АО «ДКЗ»"
+            pdf_title = "DKZ AJ xodimlar ma'lumotlari" if lang == "uz" else "Информация о сотрудниках АО «ДКЗ»"
             caption = t("pdf_caption", lang, count=len(users))
 
         pdf_path = generate_employees_pdf(users, title=pdf_title)

@@ -29,7 +29,7 @@ for font_path, bold_path in [
         except Exception:
             pass
 
-def generate_employees_pdf(users: list, output_path: str = None, title: str = "DKZ AJ mail xodimlar ro'yxati") -> str:
+def generate_employees_pdf(users: list, output_path: str = None, title: str = "DKZ AJ xodimlar ma'lumotlari") -> str:
     """
     PDF sarlavhasida berilgan sarlavha va xodim nomi, lavozimi, pochta manzili,
     telefon raqami hamda IP telefonidan iborat rasmiy jadval bo'ladi.
@@ -38,7 +38,7 @@ def generate_employees_pdf(users: list, output_path: str = None, title: str = "D
         output_dir = Path(__file__).resolve().parent.parent / "generated_docs"
         output_dir.mkdir(exist_ok=True)
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        prefix = "DKZ_AJ_qidiruv" if "Qidiruv" in title or "Поиск" in title else "DKZ_AJ_mail_xodimlar_royxati"
+        prefix = "DKZ_AJ_qidiruv" if "Qidiruv" in title or "Поиск" in title else "DKZ_AJ_xodimlar_malumotlari"
         output_path = str(output_dir / f"{prefix}_{timestamp}.pdf")
 
     # Albom (Landscape) formatda A4

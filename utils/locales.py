@@ -75,7 +75,7 @@ TEXTS = {
         ),
         "pdf_wait": "⏳ *PDF hujjat tayyorlanmoqda, kuting...*",
         "pdf_caption": (
-            "📄 *DKZ AJ mail xodimlar ro'yxati*\n\n"
+            "📄 *DKZ AJ xodimlar ma'lumotlari*\n\n"
             "👥 Jami: *{count}* nafar xodim\n"
             "🌐 Rasmiy domen: `@uz-potash.uz`"
         ),
@@ -164,7 +164,7 @@ TEXTS = {
         ),
         "pdf_wait": "⏳ *PDF документ формируется, пожалуйста подождите...*",
         "pdf_caption": (
-            "📄 *DKZ AJ mail xodimlar ro'yxati*\n\n"
+            "📄 *Информация о сотрудниках АО «ДКЗ»*\n\n"
             "👥 Всего сотрудников: *{count}*\n"
             "🌐 Официальный домен: `@uz-potash.uz`"
         ),
