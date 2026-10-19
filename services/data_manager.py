@@ -90,7 +90,7 @@ class DataManager:
             new_users = []
             for su in server_users:
                 em = su.get("email", "").lower().strip()
-                if not em or not em.endswith(f"@{target_domain}"):
+                if not em or "@" not in em or em.startswith("postmaster@"):
                     continue
                 name = su.get("name", "").strip() or em.split("@")[0]
                 emp_id_raw = su.get("employeeid", "")
@@ -108,7 +108,7 @@ class DataManager:
             new_users.sort(key=lambda x: x.get("name", "").lower())
             self._cached_users = new_users
             self._save_cache(new_users)
-            logger.info(f"✅ Server sinxronizatsiyasi yakunlandi. Jami: {len(new_users)} ta xodim (@{target_domain})")
+            logger.info(f"✅ Server sinxronizatsiyasi yakunlandi. Jami: {len(new_users)} ta xodim")
             return True
         except Exception as e:
             logger.error(f"refresh_from_db xatosi: {e}")

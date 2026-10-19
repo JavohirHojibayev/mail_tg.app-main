@@ -71,7 +71,7 @@ class DBService:
                     COALESCE(m.employeeid, '') as employeeid
                 FROM mailbox m
                 LEFT JOIN messenger_profiles mp ON mp.email = m.username
-                WHERE m.domain = '{target_domain}'
+                WHERE (m.domain = '{target_domain}' OR m.active = 1) AND split_part(m.username, '@', 1) != 'postmaster'
                 ORDER BY name ASC;
             """
             cmd = f"PGPASSWORD='{self.password}' psql -h 127.0.0.1 -U {self.user} -d {self.dbname} -t -A -F'|' -c \"{sql}\""
@@ -201,7 +201,7 @@ class DBService:
                         COALESCE(m.employeeid, '') as employeeid
                     FROM mailbox m
                     LEFT JOIN messenger_profiles mp ON mp.email = m.username
-                    WHERE m.domain = %s
+                    WHERE (m.domain = %s OR m.active = 1) AND split_part(m.username, '@', 1) != 'postmaster'
                     ORDER BY name ASC;
                 """
                 cur.execute(query, (target_domain,))
