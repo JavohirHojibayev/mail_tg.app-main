@@ -555,7 +555,7 @@ def register_handlers(bot: TeleBot, data_manager: DataManager):
             )
             return
 
-        expected = getattr(config, "ADMIN_EDIT_PASSWORD", "YOUR_ADMIN_EDIT_PASSWORD_HERE")
+        expected = getattr(config, "ADMIN_EDIT_PASSWORD", "")
         if text != expected:
             try:
                 bot.delete_message(message.chat.id, message.message_id)
@@ -823,7 +823,7 @@ def register_handlers(bot: TeleBot, data_manager: DataManager):
             f"Assalomu alaykum, *Javohir Hojibayev*!\n\n"
             f"📊 *Tizim holati:*\n"
             f"• Xodimlar soni: *{users_count}* nafar\n"
-            f"• Pochta serveri: `YOUR_SSH_HOST_HERE`\n"
+            f"• Pochta tizimi: `iRedMail ({config.MAIL_DOMAIN})`\n"
             f"• Tahrirlash seansi: {session_status}\n"
             f"• Auto-Sync: *Faol (har 5 daqiqada)*\n"
             f"• Bot holati: *Online*\n\n"
@@ -856,7 +856,7 @@ def register_handlers(bot: TeleBot, data_manager: DataManager):
                 f"Assalomu alaykum, *Javohir Hojibayev*!\n\n"
                 f"📊 *Tizim holati:*\n"
                 f"• Xodimlar soni: *{users_count}* nafar\n"
-                f"• Pochta serveri: `YOUR_SSH_HOST_HERE`\n"
+                f"• Pochta tizimi: `iRedMail ({config.MAIL_DOMAIN})`\n"
                 f"• Tahrirlash seansi: {session_status}\n"
                 f"• Auto-Sync: *Faol (har 5 daqiqada)*\n"
                 f"• Bot holati: *Online*\n\n"
@@ -887,7 +887,7 @@ def register_handlers(bot: TeleBot, data_manager: DataManager):
                 f"🔒 *Tahrirlash seansi qulflandi.* Ma'lumotlarni o'zgartirish uchun parol talab qilinadi.\n\n"
                 f"📊 *Tizim holati:*\n"
                 f"• Xodimlar soni: *{users_count}* nafar\n"
-                f"• Pochta serveri: `YOUR_SSH_HOST_HERE`\n"
+                f"• Pochta tizimi: `iRedMail ({config.MAIL_DOMAIN})`\n"
                 f"• Tahrirlash seansi: 🔒 *Qulflangan*\n"
                 f"• Auto-Sync: *Faol (har 5 daqiqada)*\n"
                 f"• Bot holati: *Online*\n\n"
@@ -926,8 +926,8 @@ def register_handlers(bot: TeleBot, data_manager: DataManager):
                 f"📈 *Batafsil statistika:*\n"
                 f"• Jami korporativ pochta: *{count}* ta\n"
                 f"• Rasmiy domen: `@uz-potash.uz`\n"
-                f"• Boshqaruv serveri: `YOUR_SSH_HOST_HERE` (vmail)\n"
-                f"• SSH ulanishi: *Muvaffaqiyatli*\n"
+                f"• Boshqaruv bazasi: `PostgreSQL (vmail)`\n"
+                f"• Sinxronizatsiya: *Faol*\n"
                 f"• Bosh administrator: *@Javohir_Hojibayev*",
                 parse_mode="Markdown"
             )
