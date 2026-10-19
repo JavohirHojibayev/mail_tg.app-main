@@ -6,6 +6,7 @@ from pathlib import Path
 from services.db_service import DBService
 from utils.translit import calculate_match_score
 from utils.parser import parse_employee_id
+import config
 
 logger = logging.getLogger(__name__)
 
@@ -85,55 +86,29 @@ class DataManager:
             if not server_users:
                 return False
 
-            current_users = self._load_cache()
-            user_map = {u["email"].lower(): u for u in current_users}
-
-            updated_count = 0
+            target_domain = getattr(config, "MAIL_DOMAIN", "uz-potash.uz").lower()
+            new_users = []
             for su in server_users:
                 em = su.get("email", "").lower().strip()
-                if not em:
+                if not em or not em.endswith(f"@{target_domain}"):
                     continue
                 name = su.get("name", "").strip() or em.split("@")[0]
                 emp_id_raw = su.get("employeeid", "")
                 parsed = parse_employee_id(emp_id_raw)
 
-                if em in user_map:
-                    existing = user_map[em]
-                    changed = False
-                    if name and existing.get("name") != name:
-                        existing["name"] = name
-                        changed = True
-                    if existing.get("position") != parsed["position"]:
-                        existing["position"] = parsed["position"]
-                        changed = True
-                    if existing.get("phone") != parsed["phone"]:
-                        existing["phone"] = parsed["phone"]
-                        changed = True
-                    if existing.get("ip_phone") != parsed["ip_phone"]:
-                        existing["ip_phone"] = parsed["ip_phone"]
-                        changed = True
-                    if existing.get("raw_info") != parsed["raw_info"]:
-                        existing["raw_info"] = parsed["raw_info"]
-                        changed = True
+                new_users.append({
+                    "name": name,
+                    "email": em,
+                    "position": parsed["position"],
+                    "phone": parsed["phone"],
+                    "ip_phone": parsed["ip_phone"],
+                    "raw_info": parsed["raw_info"]
+                })
 
-                    if changed:
-                        updated_count += 1
-                else:
-                    user_map[em] = {
-                        "name": name,
-                        "email": em,
-                        "position": parsed["position"],
-                        "phone": parsed["phone"],
-                        "ip_phone": parsed["ip_phone"],
-                        "raw_info": parsed["raw_info"]
-                    }
-                    updated_count += 1
-
-            merged_list = list(user_map.values())
-            merged_list.sort(key=lambda x: x.get("name", "").lower())
-            self._cached_users = merged_list
-            self._save_cache(merged_list)
-            logger.info(f"✅ Server sinxronizatsiyasi yakunlandi. Jami: {len(merged_list)} ta xodim (O'zgarishlar: {updated_count})")
+            new_users.sort(key=lambda x: x.get("name", "").lower())
+            self._cached_users = new_users
+            self._save_cache(new_users)
+            logger.info(f"✅ Server sinxronizatsiyasi yakunlandi. Jami: {len(new_users)} ta xodim (@{target_domain})")
             return True
         except Exception as e:
             logger.error(f"refresh_from_db xatosi: {e}")
@@ -204,4 +179,54 @@ class DataManager:
             logger.info(f"✅ Kesh yangilandi: {email_clean} -> {parsed}")
 
         return db_success or updated
+
+    def add_or_update_employee(self, name: str, email: str, position: str = "", phone: str = "", ip_phone: str = "", raw_info: str = "") -> bool:
+        """Yangi xodim qo'shish yoki mavjudini yangilash"""
+        email_clean = email.strip().lower()
+        name_clean = name.strip() or email_clean.split('@')[0]
+        pos_clean = position.strip() or "—"
+        phone_clean = phone.strip() or "—"
+        ip_clean = ip_phone.strip() or "—"
+
+        if not raw_info:
+            parts = []
+            if pos_clean != "—":
+                parts.append(pos_clean)
+            if phone_clean != "—":
+                parts.append(phone_clean)
+            if ip_clean != "—":
+                parts.append(ip_clean)
+            raw_info = " / ".join(parts)
+
+        # 1. Server bazasida upsert
+        db_success = self.db.upsert_employee(name_clean, email_clean, raw_info)
+
+        # 2. Lokal keshda yangilash yoki qo'shish
+        all_users = self._load_cache()
+        found = False
+        for u in all_users:
+            if u.get("email", "").lower() == email_clean:
+                u["name"] = name_clean
+                u["position"] = pos_clean
+                u["phone"] = phone_clean
+                u["ip_phone"] = ip_clean
+                u["raw_info"] = raw_info
+                found = True
+                break
+
+        if not found:
+            all_users.append({
+                "name": name_clean,
+                "email": email_clean,
+                "position": pos_clean,
+                "phone": phone_clean,
+                "ip_phone": ip_clean,
+                "raw_info": raw_info
+            })
+
+        all_users.sort(key=lambda x: x.get("name", "").lower())
+        self._cached_users = all_users
+        self._save_cache(all_users)
+        logger.info(f"✅ Xodim saqlandi: {email_clean} ({name_clean})")
+        return db_success or True
 

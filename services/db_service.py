@@ -63,14 +63,15 @@ class DBService:
                 password=config.SSH_PASSWORD,
                 timeout=5
             )
-            sql = """
+            target_domain = getattr(config, "MAIL_DOMAIN", "uz-potash.uz")
+            sql = f"""
                 SELECT 
                     m.username as email,
                     COALESCE(NULLIF(mp.display_name, ''), NULLIF(m.name, ''), split_part(m.username, '@', 1)) as name,
                     COALESCE(m.employeeid, '') as employeeid
                 FROM mailbox m
                 LEFT JOIN messenger_profiles mp ON mp.email = m.username
-                WHERE m.active = 1
+                WHERE m.domain = '{target_domain}'
                 ORDER BY name ASC;
             """
             cmd = f"PGPASSWORD='{self.password}' psql -h 127.0.0.1 -U {self.user} -d {self.dbname} -t -A -F'|' -c \"{sql}\""
@@ -192,6 +193,7 @@ class DBService:
             try:
                 conn = self._get_connection()
                 cur = conn.cursor()
+                target_domain = getattr(config, "MAIL_DOMAIN", "uz-potash.uz")
                 query = """
                     SELECT 
                         m.username as email,
@@ -199,10 +201,10 @@ class DBService:
                         COALESCE(m.employeeid, '') as employeeid
                     FROM mailbox m
                     LEFT JOIN messenger_profiles mp ON mp.email = m.username
-                    WHERE m.active = 1
+                    WHERE m.domain = %s
                     ORDER BY name ASC;
                 """
-                cur.execute(query)
+                cur.execute(query, (target_domain,))
                 rows = cur.fetchall()
                 if rows:
                     return [dict(r) for r in rows]
@@ -262,6 +264,75 @@ class DBService:
                 return True
             except Exception as e:
                 logger.error(f"SSH update_employee_id xatosi: {e}")
+
+        return False
+
+    def upsert_employee(self, name: str, email: str, raw_info: str) -> bool:
+        """Xodim ma'lumotlarini PostgreSQL mailbox jadvaliga qo'shadi yoki mavjud bo'lsa yangilaydi"""
+        email_clean = email.strip().lower()
+        name_clean = name.strip()
+        info_clean = raw_info.strip()
+        domain = email_clean.split('@')[1] if '@' in email_clean else getattr(config, "MAIL_DOMAIN", "uz-potash.uz")
+        maildir = f"{domain}/{email_clean}/"
+
+        if self._is_direct_available():
+            conn = None
+            try:
+                conn = self._get_connection()
+                cur = conn.cursor()
+                query = """
+                    INSERT INTO mailbox (
+                        username, name, employeeid, domain, maildir, created, modified, active
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, now(), now(), 1
+                    )
+                    ON CONFLICT (username) DO UPDATE SET
+                        name = EXCLUDED.name,
+                        employeeid = EXCLUDED.employeeid,
+                        modified = now(),
+                        active = 1;
+                """
+                cur.execute(query, (email_clean, name_clean, info_clean, domain, maildir))
+                conn.commit()
+                logger.info(f"✅ DB upsert_employee muvaffaqiyatli: {email_clean} ({name_clean})")
+                return True
+            except Exception as e:
+                logger.error(f"DB upsert_employee xatosi: {e}")
+            finally:
+                if conn:
+                    conn.close()
+
+        if config.SSH_HOST and config.SSH_PASSWORD:
+            try:
+                import paramiko
+                client = paramiko.SSHClient()
+                client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                client.connect(config.SSH_HOST, username=config.SSH_USER, password=config.SSH_PASSWORD, timeout=5)
+                safe_email = email_clean.replace("'", "''")
+                safe_name = name_clean.replace("'", "''")
+                safe_info = info_clean.replace("'", "''")
+                safe_domain = domain.replace("'", "''")
+                safe_maildir = maildir.replace("'", "''")
+                sql = f"""
+                    INSERT INTO mailbox (
+                        username, name, employeeid, domain, maildir, created, modified, active
+                    ) VALUES (
+                        '{safe_email}', '{safe_name}', '{safe_info}', '{safe_domain}', '{safe_maildir}', now(), now(), 1
+                    )
+                    ON CONFLICT (username) DO UPDATE SET
+                        name = EXCLUDED.name,
+                        employeeid = EXCLUDED.employeeid,
+                        modified = now(),
+                        active = 1;
+                """
+                cmd = f"PGPASSWORD='{self.password}' psql -h 127.0.0.1 -U {self.user} -d {self.dbname} -c \"{sql}\""
+                stdin, stdout, stderr = client.exec_command(cmd)
+                stdout.read()
+                client.close()
+                logger.info(f"✅ SSH upsert_employee muvaffaqiyatli: {email_clean}")
+                return True
+            except Exception as e:
+                logger.error(f"SSH upsert_employee xatosi: {e}")
 
         return False
 

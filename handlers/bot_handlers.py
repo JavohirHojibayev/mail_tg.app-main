@@ -11,6 +11,7 @@ from services.data_manager import DataManager
 from services.user_prefs import get_user_lang, set_user_lang
 from utils.pdf_generator import generate_employees_pdf
 from utils.locales import t, LANGUAGES
+from utils.parser import parse_employee_template
 import config
 
 logger = logging.getLogger(__name__)
@@ -288,8 +289,9 @@ def clear_admin_auth(chat_id: int):
 def get_admin_keyboard(is_auth: bool = False) -> InlineKeyboardMarkup:
     """Bosh administrator paneli tugmalari"""
     markup = InlineKeyboardMarkup()
-    markup.add(
-        InlineKeyboardButton("✏️ Xodim ma'lumotlarini o'zgartirish / qo'shish", callback_data="admin_edit_search")
+    markup.row(
+        InlineKeyboardButton("✏️ Xodimni tahrirlash", callback_data="admin_edit_search"),
+        InlineKeyboardButton("➕ Yangi xodim qo'shish", callback_data="admin_add_user")
     )
     markup.add(
         InlineKeyboardButton("🔄 Server bilan sinxronlash (Sync Now)", callback_data="admin_sync")
@@ -350,6 +352,27 @@ def send_user_edit_menu(bot: TeleBot, chat_id: int, user: dict, edit_message_id:
         except Exception:
             pass
     bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup)
+
+def send_add_user_template(bot: TeleBot, chat_id: int):
+    """Yangi xodim qo'shish uchun nusxalanadigan shablon xabarini chiqaradi"""
+    template_text = (
+        "➕ *YANGI XODIM QO'SHISH SHABLONI*\n\n"
+        "Quyidagi shablondan nusxa oling *(ustiga bossangiz avtomatik nusxalanadi)*, "
+        "ma'lumotlarni to'ldiring va botga yuboring:\n\n"
+        "`👤 F.I.SH: \n"
+        "💼 Lavozimi: \n"
+        "📧 Pochta manzili: \n"
+        "📞 Telefon raqami: \n"
+        "☎️ IP telefon: `\n\n"
+        "💡 *Namunaviy to'ldirish:*\n"
+        "`👤 F.I.SH: Eshmatov Toshmat Ali o'g'li\n"
+        "💼 Lavozimi: Bosh muhandis\n"
+        "📧 Pochta manzili: t.eshmatov@uz-potash.uz\n"
+        "📞 Telefon raqami: +998901234567\n"
+        "☎️ IP telefon: 105`\n\n"
+        "❌ _Bekor qilish uchun /cancel deb yozing._"
+    )
+    return bot.send_message(chat_id, template_text, parse_mode="Markdown")
 
 def register_handlers(bot: TeleBot, data_manager: DataManager):
 
@@ -569,12 +592,15 @@ def register_handlers(bot: TeleBot, data_manager: DataManager):
             msg = bot.send_message(
                 message.chat.id,
                 "🔍 *Xodimni qidirish:*\n\n"
-                "Ma'lumotlarini o'zgartirmoqchi yoki qo'shmoqchi bo'lgan xodimning *ismi*, *familiyasi* yoki *email* manzilini yozing:\n"
+                "Ma'lumotlarini o'zgartirmoqchi bo'lgan xodimning *ismi*, *familiyasi* yoki *email* manzilini yozing:\n"
                 "_(Masalan: Javohir, bekzod yoki admin@uz-potash.uz)_\n\n"
                 "❌ Bekor qilish uchun: /cancel",
                 parse_mode="Markdown"
             )
             bot.register_next_step_handler(msg, handle_admin_search_step)
+        elif on_success == "add_user":
+            msg = send_add_user_template(bot, message.chat.id)
+            bot.register_next_step_handler(msg, handle_admin_add_user_step)
         elif on_success.startswith("user:"):
             target_email = on_success.split(":", 1)[1]
             u = data_manager.get_user_by_email(target_email)
@@ -627,6 +653,66 @@ def register_handlers(bot: TeleBot, data_manager: DataManager):
             parse_mode="Markdown",
             reply_markup=markup
         )
+
+    def handle_admin_add_user_step(message: Message):
+        user = message.from_user
+        if (user.username or "").lower() != config.ADMIN_USERNAME.lower():
+            return
+        if not message.text:
+            return
+        text = message.text.strip()
+        if text.lower() in ["/cancel", "cancel", "bekor", "ortga"]:
+            bot.send_message(
+                message.chat.id,
+                "Yangi xodim qo'shish bekor qilindi.",
+                reply_markup=get_main_keyboard(get_user_lang(message.chat.id) or "uz")
+            )
+            return
+
+        parsed = parse_employee_template(text)
+        email = parsed.get("email", "").strip().lower()
+
+        if not email:
+            msg = bot.send_message(
+                message.chat.id,
+                "❌ *Pochta manzili (email) topilmadi!*\n\n"
+                "Iltimos, shablondagi `📧 Pochta manzili:` qatorini to'liq kiriting (masalan: `xodim@uz-potash.uz`).\n\n"
+                "Qaytadan to'ldirib yuboring yoki bekor qilish uchun /cancel deb yozing:",
+                parse_mode="Markdown"
+            )
+            bot.register_next_step_handler(msg, handle_admin_add_user_step)
+            return
+
+        name = parsed.get("name") or email.split("@")[0]
+        pos = parsed.get("position") or "—"
+        phone = parsed.get("phone") or "—"
+        ip = parsed.get("ip_phone") or "—"
+
+        data_manager.add_or_update_employee(
+            name=name,
+            email=email,
+            position=pos,
+            phone=phone,
+            ip_phone=ip
+        )
+        set_admin_authenticated(message.chat.id)
+
+        result_text = (
+            f"✅ *YANGI XODIM MUVAFFAQIYATLI SAQLANDI!*\n\n"
+            f"👤 *F.I.SH:* {name}\n"
+            f"💼 *Lavozimi:* {pos}\n"
+            f"📧 *Pochta manzili:* `{email}`\n"
+            f"📞 *Telefon raqami:* `{phone}`\n"
+            f"☎️ *IP telefon:* `{ip}`\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"💾 *PostgreSQL bazasi*, *iRedAdmin web paneli* hamda *Bot kesh*ida ma'lumotlar darhol yangilandi."
+        )
+        markup = InlineKeyboardMarkup()
+        markup.add(
+            InlineKeyboardButton("➕ Yana xodim qo'shish", callback_data="admin_add_user"),
+            InlineKeyboardButton("🔙 Admin menyusi", callback_data="admin_menu")
+        )
+        bot.send_message(message.chat.id, result_text, parse_mode="Markdown", reply_markup=markup)
 
     def handle_admin_update_field(message: Message, email: str, field_type: str):
         user = message.from_user
@@ -847,7 +933,7 @@ def register_handlers(bot: TeleBot, data_manager: DataManager):
             )
             return
 
-        if data == "admin_edit_search":
+        if data in ["admin_add_user", "admin_edit_search"]:
             if (call.from_user.username or "").lower() != config.ADMIN_USERNAME.lower():
                 bot.answer_callback_query(call.id, "Ruxsat yo'q!")
                 return
@@ -855,25 +941,31 @@ def register_handlers(bot: TeleBot, data_manager: DataManager):
             bot.clear_step_handler_by_chat_id(chat_id)
 
             if not is_admin_authenticated(chat_id):
+                action_text = "Yangi xodim qo'shish" if data == "admin_add_user" else "Xodim ma'lumotlarini o'zgartirish"
+                next_action = "add_user" if data == "admin_add_user" else "search"
                 msg = bot.send_message(
                     chat_id,
-                    "🔐 *XAVFSIZLIK TEKSHIRUVI:*\n\n"
-                    "Xodim ma'lumotlarini o'zgartirish / qo'shish uchun *xavfsizlik paroli*ni kiriting:\n\n"
+                    f"🔐 *XAVFSIZLIK TEKSHIRUVI:*\n\n"
+                    f"{action_text} uchun *xavfsizlik paroli*ni kiriting:\n\n"
+                    f"❌ Bekor qilish uchun: /cancel",
+                    parse_mode="Markdown"
+                )
+                bot.register_next_step_handler(msg, lambda m: handle_admin_auth_step(m, on_success=next_action))
+                return
+
+            if data == "admin_add_user":
+                msg = send_add_user_template(bot, chat_id)
+                bot.register_next_step_handler(msg, handle_admin_add_user_step)
+            else:
+                msg = bot.send_message(
+                    chat_id,
+                    "🔍 *Xodimni qidirish:*\n\n"
+                    "Ma'lumotlarini o'zgartirmoqchi bo'lgan xodimning *ismi*, *familiyasi* yoki *email* manzilini yozing:\n"
+                    "_(Masalan: Javohir, bekzod yoki admin@uz-potash.uz)_\n\n"
                     "❌ Bekor qilish uchun: /cancel",
                     parse_mode="Markdown"
                 )
-                bot.register_next_step_handler(msg, lambda m: handle_admin_auth_step(m, on_success="search"))
-                return
-
-            msg = bot.send_message(
-                chat_id,
-                "🔍 *Xodimni qidirish:*\n\n"
-                "Ma'lumotlarini o'zgartirmoqchi yoki qo'shmoqchi bo'lgan xodimning *ismi*, *familiyasi* yoki *email* manzilini yozing:\n"
-                "_(Masalan: Javohir, bekzod yoki admin@uz-potash.uz)_\n\n"
-                "❌ Bekor qilish uchun: /cancel",
-                parse_mode="Markdown"
-            )
-            bot.register_next_step_handler(msg, handle_admin_search_step)
+                bot.register_next_step_handler(msg, handle_admin_search_step)
             return
 
         if data.startswith("adm_usr:"):
