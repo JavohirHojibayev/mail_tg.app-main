@@ -1,0 +1,41 @@
+# =====================================================
+# Git Ignore - Maxfiy va keraksiz fayllar
+# =====================================================
+
+# Maxfiy kalitlar va muhit fayllari (HECH QACHON GITGA CHIQMAYDI)
+.env
+.env.*
+!.env.example
+
+# Python kesh va kompilyatsiya fayllari
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# Virtual muhitlar
+venv/
+env/
+ENV/
+.venv/
+
+# Yaratilgan vaqtinchalik PDF hujjatlar
+generated_docs/*.pdf
+!generated_docs/.gitkeep
+
+# IDE va tahrirlovchi sozlamalari
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Operatsion tizim fayllari
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Log fayllar
+*.log
+
+# Foydalanuvchi sozlamalari
+user_preferences.json
