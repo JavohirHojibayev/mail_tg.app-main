@@ -270,7 +270,22 @@ def send_pdf_document(bot: TeleBot, chat_id: int, users: list, lang: str = "uz",
             message_id=wait_msg.message_id
         )
 
-def get_admin_keyboard() -> InlineKeyboardMarkup:
+ADMIN_AUTH_SESSIONS = {}
+AUTH_SESSION_LIFETIME = 600  # 10 daqiqa faol seans
+
+def is_admin_authenticated(chat_id: int) -> bool:
+    """Admin paroli tasdiqlanganligini tekshiradi"""
+    return time.time() < ADMIN_AUTH_SESSIONS.get(chat_id, 0)
+
+def set_admin_authenticated(chat_id: int):
+    """Admin seansini faollashtiradi"""
+    ADMIN_AUTH_SESSIONS[chat_id] = time.time() + AUTH_SESSION_LIFETIME
+
+def clear_admin_auth(chat_id: int):
+    """Admin seansini qulflaydi"""
+    ADMIN_AUTH_SESSIONS.pop(chat_id, None)
+
+def get_admin_keyboard(is_auth: bool = False) -> InlineKeyboardMarkup:
     """Bosh administrator paneli tugmalari"""
     markup = InlineKeyboardMarkup()
     markup.add(
@@ -282,6 +297,10 @@ def get_admin_keyboard() -> InlineKeyboardMarkup:
     markup.add(
         InlineKeyboardButton("📊 Baza holati va statistika", callback_data="admin_stats")
     )
+    if is_auth:
+        markup.add(
+            InlineKeyboardButton("🔒 Seansni qulflash (Chiqish)", callback_data="admin_lock")
+        )
     return markup
 
 def get_user_edit_markup(email: str) -> InlineKeyboardMarkup:
@@ -497,7 +516,73 @@ def register_handlers(bot: TeleBot, data_manager: DataManager):
     def btn_lang_prompt(message: Message):
         send_language_prompt(bot, message.chat.id)
 
-    # Admin qidiruv va tahrirlash bosqichlari (Next step handlers)
+    # Admin xavfsizlik paroli va tahrirlash bosqichlari (Next step handlers)
+    def handle_admin_auth_step(message: Message, on_success: str):
+        user = message.from_user
+        if (user.username or "").lower() != config.ADMIN_USERNAME.lower():
+            return
+        if not message.text:
+            return
+        text = message.text.strip()
+        if text.lower() in ["/cancel", "cancel", "bekor", "ortga"]:
+            bot.send_message(
+                message.chat.id,
+                "Admin amali bekor qilindi.",
+                reply_markup=get_main_keyboard(get_user_lang(message.chat.id) or "uz")
+            )
+            return
+
+        expected = getattr(config, "ADMIN_EDIT_PASSWORD", "YOUR_ADMIN_EDIT_PASSWORD_HERE")
+        if text != expected:
+            try:
+                bot.delete_message(message.chat.id, message.message_id)
+            except Exception:
+                pass
+
+            markup = InlineKeyboardMarkup()
+            markup.add(
+                InlineKeyboardButton("🔑 Qaytadan kiritish", callback_data="admin_edit_search"),
+                InlineKeyboardButton("🔙 Admin menyusi", callback_data="admin_menu")
+            )
+            bot.send_message(
+                message.chat.id,
+                "❌ *Xavfsizlik paroli noto'g'ri!*\n\nXodim ma'lumotlarini o'zgartirishga ruxsat berilmadi.",
+                parse_mode="Markdown",
+                reply_markup=markup
+            )
+            return
+
+        # Parol to'g'ri kiritildi
+        set_admin_authenticated(message.chat.id)
+        try:
+            bot.delete_message(message.chat.id, message.message_id)
+        except Exception:
+            pass
+
+        bot.send_message(
+            message.chat.id,
+            "🔓 *Xavfsizlik paroli tasdiqlandi!*\n_Xodim ma'lumotlarini tahrirlash seansi faollashtirildi._",
+            parse_mode="Markdown"
+        )
+
+        if on_success == "search":
+            msg = bot.send_message(
+                message.chat.id,
+                "🔍 *Xodimni qidirish:*\n\n"
+                "Ma'lumotlarini o'zgartirmoqchi yoki qo'shmoqchi bo'lgan xodimning *ismi*, *familiyasi* yoki *email* manzilini yozing:\n"
+                "_(Masalan: Javohir, bekzod yoki admin@uz-potash.uz)_\n\n"
+                "❌ Bekor qilish uchun: /cancel",
+                parse_mode="Markdown"
+            )
+            bot.register_next_step_handler(msg, handle_admin_search_step)
+        elif on_success.startswith("user:"):
+            target_email = on_success.split(":", 1)[1]
+            u = data_manager.get_user_by_email(target_email)
+            if u:
+                send_user_edit_menu(bot, message.chat.id, u)
+            else:
+                bot.send_message(message.chat.id, "❌ Xodim topilmadi!")
+
     def handle_admin_search_step(message: Message):
         user = message.from_user
         if (user.username or "").lower() != config.ADMIN_USERNAME.lower():
@@ -607,6 +692,7 @@ def register_handlers(bot: TeleBot, data_manager: DataManager):
         u_name = target_user.get("name") or email
 
         if success:
+            set_admin_authenticated(message.chat.id)
             bot.send_message(
                 message.chat.id,
                 f"✅ *Muvaffaqiyatli saqlandi!*\n\n"
@@ -642,7 +728,9 @@ def register_handlers(bot: TeleBot, data_manager: DataManager):
             return
 
         users_count = len(data_manager.get_users())
-        markup = get_admin_keyboard()
+        is_auth = is_admin_authenticated(message.chat.id)
+        markup = get_admin_keyboard(is_auth=is_auth)
+        session_status = "🔓 *Faol (Ochiq)*" if is_auth else "🔒 *Qulflangan (Parol talab qilinadi)*"
 
         admin_text = (
             f"👑 *BOSH ADMINISTRATOR PANELI*\n\n"
@@ -650,6 +738,7 @@ def register_handlers(bot: TeleBot, data_manager: DataManager):
             f"📊 *Tizim holati:*\n"
             f"• Xodimlar soni: *{users_count}* nafar\n"
             f"• Pochta serveri: `YOUR_SSH_HOST_HERE`\n"
+            f"• Tahrirlash seansi: {session_status}\n"
             f"• Auto-Sync: *Faol (har 5 daqiqada)*\n"
             f"• Bot holati: *Online*\n\n"
             f"Kerakli amalni tanlang 👇"
@@ -674,12 +763,15 @@ def register_handlers(bot: TeleBot, data_manager: DataManager):
             bot.answer_callback_query(call.id)
             bot.clear_step_handler_by_chat_id(chat_id)
             users_count = len(data_manager.get_users())
+            is_auth = is_admin_authenticated(chat_id)
+            session_status = "🔓 *Faol (Ochiq)*" if is_auth else "🔒 *Qulflangan (Parol talab qilinadi)*"
             admin_text = (
                 f"👑 *BOSH ADMINISTRATOR PANELI*\n\n"
                 f"Assalomu alaykum, *Javohir Hojibayev*!\n\n"
                 f"📊 *Tizim holati:*\n"
                 f"• Xodimlar soni: *{users_count}* nafar\n"
                 f"• Pochta serveri: `YOUR_SSH_HOST_HERE`\n"
+                f"• Tahrirlash seansi: {session_status}\n"
                 f"• Auto-Sync: *Faol (har 5 daqiqada)*\n"
                 f"• Bot holati: *Online*\n\n"
                 f"Kerakli amalni tanlang 👇"
@@ -690,10 +782,41 @@ def register_handlers(bot: TeleBot, data_manager: DataManager):
                     chat_id=chat_id,
                     message_id=call.message.message_id,
                     parse_mode="Markdown",
-                    reply_markup=get_admin_keyboard()
+                    reply_markup=get_admin_keyboard(is_auth=is_auth)
                 )
             except Exception:
-                bot.send_message(chat_id, admin_text, parse_mode="Markdown", reply_markup=get_admin_keyboard())
+                bot.send_message(chat_id, admin_text, parse_mode="Markdown", reply_markup=get_admin_keyboard(is_auth=is_auth))
+            return
+
+        if data == "admin_lock":
+            if (call.from_user.username or "").lower() != config.ADMIN_USERNAME.lower():
+                bot.answer_callback_query(call.id, "Ruxsat yo'q!")
+                return
+            clear_admin_auth(chat_id)
+            bot.answer_callback_query(call.id, "🔒 Tahrirlash seansi qulflandi!")
+            users_count = len(data_manager.get_users())
+            admin_text = (
+                f"👑 *BOSH ADMINISTRATOR PANELI*\n\n"
+                f"Assalomu alaykum, *Javohir Hojibayev*!\n\n"
+                f"🔒 *Tahrirlash seansi qulflandi.* Ma'lumotlarni o'zgartirish uchun parol talab qilinadi.\n\n"
+                f"📊 *Tizim holati:*\n"
+                f"• Xodimlar soni: *{users_count}* nafar\n"
+                f"• Pochta serveri: `YOUR_SSH_HOST_HERE`\n"
+                f"• Tahrirlash seansi: 🔒 *Qulflangan*\n"
+                f"• Auto-Sync: *Faol (har 5 daqiqada)*\n"
+                f"• Bot holati: *Online*\n\n"
+                f"Kerakli amalni tanlang 👇"
+            )
+            try:
+                bot.edit_message_text(
+                    admin_text,
+                    chat_id=chat_id,
+                    message_id=call.message.message_id,
+                    parse_mode="Markdown",
+                    reply_markup=get_admin_keyboard(is_auth=False)
+                )
+            except Exception:
+                bot.send_message(chat_id, admin_text, parse_mode="Markdown", reply_markup=get_admin_keyboard(is_auth=False))
             return
 
         if data == "admin_sync":
@@ -730,6 +853,18 @@ def register_handlers(bot: TeleBot, data_manager: DataManager):
                 return
             bot.answer_callback_query(call.id)
             bot.clear_step_handler_by_chat_id(chat_id)
+
+            if not is_admin_authenticated(chat_id):
+                msg = bot.send_message(
+                    chat_id,
+                    "🔐 *XAVFSIZLIK TEKSHIRUVI:*\n\n"
+                    "Xodim ma'lumotlarini o'zgartirish / qo'shish uchun *xavfsizlik paroli*ni kiriting:\n\n"
+                    "❌ Bekor qilish uchun: /cancel",
+                    parse_mode="Markdown"
+                )
+                bot.register_next_step_handler(msg, lambda m: handle_admin_auth_step(m, on_success="search"))
+                return
+
             msg = bot.send_message(
                 chat_id,
                 "🔍 *Xodimni qidirish:*\n\n"
@@ -752,6 +887,19 @@ def register_handlers(bot: TeleBot, data_manager: DataManager):
                 return
             bot.answer_callback_query(call.id)
             bot.clear_step_handler_by_chat_id(chat_id)
+
+            if not is_admin_authenticated(chat_id):
+                u_name = user.get("name") or email
+                msg = bot.send_message(
+                    chat_id,
+                    "🔐 *XAVFSIZLIK TEKSHIRUVI:*\n\n"
+                    f"*{u_name}* ma'lumotlarini tahrirlash uchun *xavfsizlik paroli*ni kiriting:\n\n"
+                    "❌ Bekor qilish uchun: /cancel",
+                    parse_mode="Markdown"
+                )
+                bot.register_next_step_handler(msg, lambda m: handle_admin_auth_step(m, on_success=f"user:{email}"))
+                return
+
             send_user_edit_menu(bot, chat_id, user, edit_message_id=call.message.message_id)
             return
 
@@ -769,6 +917,16 @@ def register_handlers(bot: TeleBot, data_manager: DataManager):
 
             u_name = user.get("name") or email
             bot.clear_step_handler_by_chat_id(chat_id)
+
+            if not is_admin_authenticated(chat_id):
+                bot.answer_callback_query(call.id, "🔐 Parol talab qilinadi!", show_alert=True)
+                msg = bot.send_message(
+                    chat_id,
+                    "🔐 *Xavfsizlik paroli talab qilinadi!*\n\nXodim ma'lumotlarini o'zgartirish uchun parolni kiriting:\n\n❌ Bekor qilish: /cancel",
+                    parse_mode="Markdown"
+                )
+                bot.register_next_step_handler(msg, lambda m: handle_admin_auth_step(m, on_success=f"user:{email}"))
+                return
 
             if action == "clear":
                 bot.answer_callback_query(call.id, "Tozalanmoqda...")
