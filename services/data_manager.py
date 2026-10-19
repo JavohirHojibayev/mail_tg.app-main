@@ -165,3 +165,43 @@ class DataManager:
             logger.warning(f"Kesh o'qishda xatolik: {e}")
             return []
 
+    def get_user_by_email(self, email: str) -> dict:
+        """Berilgan email bo'yicha xodimni topadi"""
+        if not email:
+            return None
+        target = email.strip().lower()
+        for u in self.get_all_users_raw():
+            if u.get("email", "").lower() == target:
+                return u
+        return None
+
+    def update_user_employee_info(self, email: str, new_raw_info: str) -> bool:
+        """
+        Xodimning lavozim, telefon va IP telefon ma'lumotlarini server bazasida (PostgreSQL)
+        hamda lokal keshda darhol yangilaydi.
+        """
+        parsed = parse_employee_id(new_raw_info)
+        email_clean = email.strip().lower()
+
+        # 1. Server bazasida yangilash
+        db_success = self.db.update_employee_id(email_clean, new_raw_info)
+
+        # 2. Lokal keshda yangilash
+        all_users = self._load_cache()
+        updated = False
+        for u in all_users:
+            if u.get("email", "").lower() == email_clean:
+                u["position"] = parsed["position"]
+                u["phone"] = parsed["phone"]
+                u["ip_phone"] = parsed["ip_phone"]
+                u["raw_info"] = parsed["raw_info"]
+                updated = True
+                break
+
+        if updated:
+            self._cached_users = all_users
+            self._save_cache(all_users)
+            logger.info(f"✅ Kesh yangilandi: {email_clean} -> {parsed}")
+
+        return db_success or updated
+

@@ -270,6 +270,68 @@ def send_pdf_document(bot: TeleBot, chat_id: int, users: list, lang: str = "uz",
             message_id=wait_msg.message_id
         )
 
+def get_admin_keyboard() -> InlineKeyboardMarkup:
+    """Bosh administrator paneli tugmalari"""
+    markup = InlineKeyboardMarkup()
+    markup.add(
+        InlineKeyboardButton("✏️ Xodim ma'lumotlarini o'zgartirish / qo'shish", callback_data="admin_edit_search")
+    )
+    markup.add(
+        InlineKeyboardButton("🔄 Server bilan sinxronlash (Sync Now)", callback_data="admin_sync")
+    )
+    markup.add(
+        InlineKeyboardButton("📊 Baza holati va statistika", callback_data="admin_stats")
+    )
+    return markup
+
+def get_user_edit_markup(email: str) -> InlineKeyboardMarkup:
+    """Xodim ma'lumotlarini tahrirlash uchun maxsus menyu"""
+    markup = InlineKeyboardMarkup()
+    markup.row(
+        InlineKeyboardButton("💼 Lavozim", callback_data=f"adm_ed:pos:{email}"),
+        InlineKeyboardButton("📞 Telefon", callback_data=f"adm_ed:ph:{email}")
+    )
+    markup.row(
+        InlineKeyboardButton("☎️ IP telefon", callback_data=f"adm_ed:ip:{email}"),
+        InlineKeyboardButton("📝 Hammasi bittada", callback_data=f"adm_ed:all:{email}")
+    )
+    markup.add(
+        InlineKeyboardButton("🗑 Ma'lumotlarni tozalash", callback_data=f"adm_ed:clear:{email}")
+    )
+    markup.add(
+        InlineKeyboardButton("🔙 Admin menyusiga qaytish", callback_data="admin_menu")
+    )
+    return markup
+
+def send_user_edit_menu(bot: TeleBot, chat_id: int, user: dict, edit_message_id: int = None):
+    """Xodim ma'lumotlari kartasi va tahrirlash tugmalarini chiqarish"""
+    name = user.get("name") or user.get("email", "").split("@")[0]
+    email = user.get("email", "")
+    pos = user.get("position") or "—"
+    phone = user.get("phone") or "—"
+    ip = user.get("ip_phone") or "—"
+    raw = user.get("raw_info") or "—"
+
+    text = (
+        f"👑 *BOSH ADMINISTRATOR: Xodim tahrirlash*\n\n"
+        f"• *Ism:* {name}\n"
+        f"• *Email:* `{email}`\n"
+        f"• *Lavozim:* {pos}\n"
+        f"• *Telefon:* `{phone}`\n"
+        f"• *IP telefon:* `{ip}`\n"
+        f"• *Bazada (employeeid):* `{raw}`\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"Qaysi ma'lumotni kiritmoqchisiz yoki o'zgartirmoqchisiz? Tanlang 👇"
+    )
+    markup = get_user_edit_markup(email)
+    if edit_message_id:
+        try:
+            bot.edit_message_text(text, chat_id=chat_id, message_id=edit_message_id, parse_mode="Markdown", reply_markup=markup)
+            return
+        except Exception:
+            pass
+    bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup)
+
 def register_handlers(bot: TeleBot, data_manager: DataManager):
 
     # Standart global buyruqlar menyusini o'rnatish
@@ -435,6 +497,135 @@ def register_handlers(bot: TeleBot, data_manager: DataManager):
     def btn_lang_prompt(message: Message):
         send_language_prompt(bot, message.chat.id)
 
+    # Admin qidiruv va tahrirlash bosqichlari (Next step handlers)
+    def handle_admin_search_step(message: Message):
+        user = message.from_user
+        if (user.username or "").lower() != config.ADMIN_USERNAME.lower():
+            return
+        if not message.text:
+            return
+        query = message.text.strip()
+        if query.lower() in ["/cancel", "cancel", "bekor", "ortga"]:
+            bot.send_message(
+                message.chat.id,
+                "Admin amali bekor qilindi.",
+                reply_markup=get_main_keyboard(get_user_lang(message.chat.id) or "uz")
+            )
+            return
+
+        found = data_manager.get_users(search=query)
+        if not found:
+            markup = InlineKeyboardMarkup()
+            markup.add(
+                InlineKeyboardButton("🔍 Qaytadan qidirish", callback_data="admin_edit_search"),
+                InlineKeyboardButton("🔙 Admin menyusi", callback_data="admin_menu")
+            )
+            bot.send_message(
+                message.chat.id,
+                f"❌ *'{query}'* bo'yicha hech qanday xodim topilmadi.",
+                parse_mode="Markdown",
+                reply_markup=markup
+            )
+            return
+
+        markup = InlineKeyboardMarkup()
+        for u in found[:10]:
+            uname = u.get("name") or u.get("email", "").split("@")[0]
+            uemail = u.get("email", "")
+            markup.add(InlineKeyboardButton(f"👤 {uname} ({uemail})", callback_data=f"adm_usr:{uemail}"))
+
+        markup.add(InlineKeyboardButton("🔙 Admin menyusiga qaytish", callback_data="admin_menu"))
+
+        bot.send_message(
+            message.chat.id,
+            f"📋 *Topilgan xodimlar ({len(found)} ta):*\nTahrirlash uchun xodimni tanlang 👇",
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+
+    def handle_admin_update_field(message: Message, email: str, field_type: str):
+        user = message.from_user
+        if (user.username or "").lower() != config.ADMIN_USERNAME.lower():
+            return
+        if not message.text:
+            return
+        text = message.text.strip()
+        if text.lower() in ["/cancel", "cancel", "bekor", "ortga"]:
+            bot.send_message(message.chat.id, "Tahrirlash bekor qilindi.")
+            u = data_manager.get_user_by_email(email)
+            if u:
+                send_user_edit_menu(bot, message.chat.id, u)
+            return
+
+        target_user = data_manager.get_user_by_email(email)
+        if not target_user:
+            bot.send_message(message.chat.id, "❌ Xodim topilmadi!")
+            return
+
+        curr_pos = target_user.get("position") or ""
+        if curr_pos == "—":
+            curr_pos = ""
+        curr_ph = target_user.get("phone") or ""
+        if curr_ph == "—":
+            curr_ph = ""
+        curr_ip = target_user.get("ip_phone") or ""
+        if curr_ip == "—":
+            curr_ip = ""
+
+        if field_type == "pos":
+            new_pos = text
+            parts = [new_pos]
+            if curr_ph:
+                parts.append(curr_ph)
+            if curr_ip:
+                parts.append(curr_ip)
+            new_raw = " / ".join(parts)
+        elif field_type == "ph":
+            new_ph = text
+            parts = []
+            if curr_pos:
+                parts.append(curr_pos)
+            parts.append(new_ph)
+            if curr_ip:
+                parts.append(curr_ip)
+            new_raw = " / ".join(parts)
+        elif field_type == "ip":
+            new_ip = text
+            parts = []
+            if curr_pos:
+                parts.append(curr_pos)
+            if curr_ph:
+                parts.append(curr_ph)
+            parts.append(new_ip)
+            new_raw = " / ".join(parts)
+        elif field_type == "all":
+            new_raw = text
+        else:
+            new_raw = text
+
+        success = data_manager.update_user_employee_info(email, new_raw)
+        u_name = target_user.get("name") or email
+
+        if success:
+            bot.send_message(
+                message.chat.id,
+                f"✅ *Muvaffaqiyatli saqlandi!*\n\n"
+                f"👤 Xodim: *{u_name}*\n"
+                f"📝 Yangi ma'lumot: `{new_raw}`\n"
+                f"💾 Server bazasi (PostgreSQL / iRedAdmin) va bot ma'lumotlari darhol yangilandi.",
+                parse_mode="Markdown"
+            )
+        else:
+            bot.send_message(
+                message.chat.id,
+                f"⚠️ Ma'lumot lokal keshda yangilandi, ammo server DB ga yozishda muammo yuz berdi.",
+                parse_mode="Markdown"
+            )
+
+        updated_user = data_manager.get_user_by_email(email)
+        if updated_user:
+            send_user_edit_menu(bot, message.chat.id, updated_user)
+
     # 👑 /admin (Faqat Javohir Hojibayev uchun maxsus boshqaruv)
     @bot.message_handler(commands=['admin'])
     def cmd_admin(message: Message):
@@ -451,13 +642,7 @@ def register_handlers(bot: TeleBot, data_manager: DataManager):
             return
 
         users_count = len(data_manager.get_users())
-        markup = InlineKeyboardMarkup()
-        markup.add(
-            InlineKeyboardButton("🔄 Server bilan sinxronlash (Sync Now)", callback_data="admin_sync")
-        )
-        markup.add(
-            InlineKeyboardButton("📊 Baza holati va statistika", callback_data="admin_stats")
-        )
+        markup = get_admin_keyboard()
 
         admin_text = (
             f"👑 *BOSH ADMINISTRATOR PANELI*\n\n"
@@ -482,6 +667,35 @@ def register_handlers(bot: TeleBot, data_manager: DataManager):
             return
 
         # Admin amallari
+        if data == "admin_menu":
+            if (call.from_user.username or "").lower() != config.ADMIN_USERNAME.lower():
+                bot.answer_callback_query(call.id, "Ruxsat yo'q!")
+                return
+            bot.answer_callback_query(call.id)
+            bot.clear_step_handler_by_chat_id(chat_id)
+            users_count = len(data_manager.get_users())
+            admin_text = (
+                f"👑 *BOSH ADMINISTRATOR PANELI*\n\n"
+                f"Assalomu alaykum, *Javohir Hojibayev*!\n\n"
+                f"📊 *Tizim holati:*\n"
+                f"• Xodimlar soni: *{users_count}* nafar\n"
+                f"• Pochta serveri: `YOUR_SSH_HOST_HERE`\n"
+                f"• Auto-Sync: *Faol (har 5 daqiqada)*\n"
+                f"• Bot holati: *Online*\n\n"
+                f"Kerakli amalni tanlang 👇"
+            )
+            try:
+                bot.edit_message_text(
+                    admin_text,
+                    chat_id=chat_id,
+                    message_id=call.message.message_id,
+                    parse_mode="Markdown",
+                    reply_markup=get_admin_keyboard()
+                )
+            except Exception:
+                bot.send_message(chat_id, admin_text, parse_mode="Markdown", reply_markup=get_admin_keyboard())
+            return
+
         if data == "admin_sync":
             if (call.from_user.username or "").lower() != config.ADMIN_USERNAME.lower():
                 bot.answer_callback_query(call.id, "Ruxsat yo'q!")
@@ -508,6 +722,96 @@ def register_handlers(bot: TeleBot, data_manager: DataManager):
                 f"• Bosh administrator: *@Javohir_Hojibayev*",
                 parse_mode="Markdown"
             )
+            return
+
+        if data == "admin_edit_search":
+            if (call.from_user.username or "").lower() != config.ADMIN_USERNAME.lower():
+                bot.answer_callback_query(call.id, "Ruxsat yo'q!")
+                return
+            bot.answer_callback_query(call.id)
+            bot.clear_step_handler_by_chat_id(chat_id)
+            msg = bot.send_message(
+                chat_id,
+                "🔍 *Xodimni qidirish:*\n\n"
+                "Ma'lumotlarini o'zgartirmoqchi yoki qo'shmoqchi bo'lgan xodimning *ismi*, *familiyasi* yoki *email* manzilini yozing:\n"
+                "_(Masalan: Javohir, bekzod yoki admin@uz-potash.uz)_\n\n"
+                "❌ Bekor qilish uchun: /cancel",
+                parse_mode="Markdown"
+            )
+            bot.register_next_step_handler(msg, handle_admin_search_step)
+            return
+
+        if data.startswith("adm_usr:"):
+            if (call.from_user.username or "").lower() != config.ADMIN_USERNAME.lower():
+                bot.answer_callback_query(call.id, "Ruxsat yo'q!")
+                return
+            email = data.split(":", 1)[1]
+            user = data_manager.get_user_by_email(email)
+            if not user:
+                bot.answer_callback_query(call.id, "Xodim topilmadi!", show_alert=True)
+                return
+            bot.answer_callback_query(call.id)
+            bot.clear_step_handler_by_chat_id(chat_id)
+            send_user_edit_menu(bot, chat_id, user, edit_message_id=call.message.message_id)
+            return
+
+        if data.startswith("adm_ed:"):
+            if (call.from_user.username or "").lower() != config.ADMIN_USERNAME.lower():
+                bot.answer_callback_query(call.id, "Ruxsat yo'q!")
+                return
+            parts = data.split(":")
+            action = parts[1]
+            email = parts[2]
+            user = data_manager.get_user_by_email(email)
+            if not user:
+                bot.answer_callback_query(call.id, "Xodim topilmadi!", show_alert=True)
+                return
+
+            u_name = user.get("name") or email
+            bot.clear_step_handler_by_chat_id(chat_id)
+
+            if action == "clear":
+                bot.answer_callback_query(call.id, "Tozalanmoqda...")
+                data_manager.update_user_employee_info(email, "")
+                updated = data_manager.get_user_by_email(email)
+                bot.send_message(chat_id, f"🗑 *{u_name}* ma'lumotlari tozalandi va server bazasida bo'shatildi.", parse_mode="Markdown")
+                send_user_edit_menu(bot, chat_id, updated)
+                return
+
+            bot.answer_callback_query(call.id)
+
+            if action == "pos":
+                msg = bot.send_message(
+                    chat_id,
+                    f"💼 *{u_name}* uchun yangi *lavozim* nomini kiriting:\n_(Masalan: Bosh mutaxassis)_\n\n❌ Bekor qilish: /cancel",
+                    parse_mode="Markdown"
+                )
+                bot.register_next_step_handler(msg, lambda m: handle_admin_update_field(m, email, "pos"))
+            elif action == "ph":
+                msg = bot.send_message(
+                    chat_id,
+                    f"📞 *{u_name}* uchun yangi *telefon raqami*ni kiriting:\n_(Masalan: +998901234567)_\n\n❌ Bekor qilish: /cancel",
+                    parse_mode="Markdown"
+                )
+                bot.register_next_step_handler(msg, lambda m: handle_admin_update_field(m, email, "ph"))
+            elif action == "ip":
+                msg = bot.send_message(
+                    chat_id,
+                    f"☎️ *{u_name}* uchun yangi *IP telefon* raqamini kiriting:\n_(Masalan: 105 yoki 241)_\n\n❌ Bekor qilish: /cancel",
+                    parse_mode="Markdown"
+                )
+                bot.register_next_step_handler(msg, lambda m: handle_admin_update_field(m, email, "ip"))
+            elif action == "all":
+                msg = bot.send_message(
+                    chat_id,
+                    f"📝 *{u_name}* uchun ma'lumotlarni bir qatorda kiriting:\n"
+                    f"Format: `Lavozim / Telefon / IP telefon`\n\n"
+                    f"_(Ajratish uchun /, @, #, $, % belgilaridan foydalanishingiz mumkin)_\n"
+                    f"Masalan:\n`Bosh energetik / +998901234567 / 105`\n\n"
+                    f"❌ Bekor qilish: /cancel",
+                    parse_mode="Markdown"
+                )
+                bot.register_next_step_handler(msg, lambda m: handle_admin_update_field(m, email, "all"))
             return
 
         # 1. Til tanlash
@@ -643,6 +947,11 @@ def register_handlers(bot: TeleBot, data_manager: DataManager):
             markup.add(
                 InlineKeyboardButton(f"{t('btn_results_pdf', lang)} (1)", callback_data=f"spdf:{sid}")
             )
+            # Admin uchun qulay tezkor tahrirlash tugmasi
+            if (message.from_user.username or "").lower() == config.ADMIN_USERNAME.lower():
+                markup.add(
+                    InlineKeyboardButton("✏️ Tahrirlash (Admin)", callback_data=f"adm_usr:{user.get('email')}")
+                )
             bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup)
         else:
             sid = save_search_session(chat_id, query, users)

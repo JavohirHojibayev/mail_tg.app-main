@@ -224,3 +224,44 @@ class DBService:
 
         return []
 
+    def update_employee_id(self, email: str, raw_info: str) -> bool:
+        """Xodimning employeeid (lavozim, telefon, IP) ma'lumotlarini PostgreSQL bazasida yangilaydi"""
+        email_clean = email.strip().lower()
+        info_clean = raw_info.strip()
+
+        # 1. To'g'ridan-to'g'ri PostgreSQL orqali yangilash
+        if self._is_direct_available():
+            conn = None
+            try:
+                conn = self._get_connection()
+                cur = conn.cursor()
+                cur.execute("UPDATE mailbox SET employeeid = %s WHERE username = %s;", (info_clean, email_clean))
+                conn.commit()
+                logger.info(f"✅ DB orqali employeeid yangilandi: {email_clean} -> {info_clean}")
+                return True
+            except Exception as e:
+                logger.error(f"DB update_employee_id xatosi: {e}")
+            finally:
+                if conn:
+                    conn.close()
+
+        # 2. Agar DB to'g'ridan-to'g'ri ochiq bo'lmasa, SSH orqali yangilash
+        if config.SSH_HOST and config.SSH_PASSWORD:
+            try:
+                import paramiko
+                client = paramiko.SSHClient()
+                client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                client.connect(config.SSH_HOST, username=config.SSH_USER, password=config.SSH_PASSWORD, timeout=5)
+                safe_val = info_clean.replace("'", "''")
+                sql = f"UPDATE mailbox SET employeeid = '{safe_val}' WHERE username = '{email_clean}';"
+                cmd = f"PGPASSWORD='{self.password}' psql -h 127.0.0.1 -U {self.user} -d {self.dbname} -c \"{sql}\""
+                stdin, stdout, stderr = client.exec_command(cmd)
+                stdout.read()
+                client.close()
+                logger.info(f"✅ SSH orqali employeeid yangilandi: {email_clean} -> {info_clean}")
+                return True
+            except Exception as e:
+                logger.error(f"SSH update_employee_id xatosi: {e}")
+
+        return False
+
